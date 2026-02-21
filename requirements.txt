@@ -1,3 +1,103 @@
 praw==7.7.0
 pandas==2.0.3
 python-dotenv==1.0.0
+import requests
+import pandas as pd
+from datetime import datetime
+import os
+
+# Keywords to search for
+KEYWORDS = ['URL shorteners', 'link management', 'bio link', 'link in bio', 'URL tracking']
+
+# Subreddit to monitor
+SUBREDDIT = 'sideprojects'
+
+def calculate_relevance_score(post_title, keywords):
+    """Calculate relevance score for a post"""
+    score = 0
+    title_lower = post_title.lower()
+    
+    for keyword in keywords:
+        if keyword.lower() in title_lower:
+            score += 2
+    
+    return score
+
+def fetch_and_filter_posts():
+    """Fetch posts from Reddit using public API"""
+    posts_data = []
+    
+    try:
+        # Using Reddit JSON API (public, no authentication needed)
+        url = f"https://www.reddit.com/r/{SUBREDDIT}/new.json"
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+        
+        response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status()
+        
+        data = response.json()
+        posts = data['data']['children']
+        
+        for post in posts:
+            post_data = post['data']
+            relevance_score = calculate_relevance_score(post_data['title'], KEYWORDS)
+            
+            if relevance_score > 0:
+                posts_data.append({
+                    'timestamp': datetime.fromtimestamp(post_data['created_utc']),
+                    'title': post_data['title'],
+                    'author': post_data['author'] if post_data['author'] else '[deleted]',
+                    'url': f"https://reddit.com{post_data['permalink']}",
+                    'relevance_score': relevance_score,
+                    'upvotes': post_data['score'],
+                    'comments': post_data['num_comments'],
+                    'notes': ''
+                })
+        
+    except Exception as e:
+        print(f"Error fetching posts: {e}")
+    
+    return posts_data
+
+def save_to_csv(posts_data):
+    """Save posts data to CSV file"""
+    csv_filename = 'reddit_findings.csv'
+    
+    if not posts_data:
+        print("No new posts to save")
+        return 0
+    
+    # Load existing data if file exists
+    if os.path.exists(csv_filename):
+        existing_df = pd.read_csv(csv_filename)
+        new_df = pd.DataFrame(posts_data)
+        # Combine and remove duplicates based on URL
+        combined_df = pd.concat([existing_df, new_df], ignore_index=True)
+        combined_df = combined_df.drop_duplicates(subset=['url'], keep='first')
+        combined_df = combined_df.sort_values('timestamp', ascending=False)
+        combined_df.to_csv(csv_filename, index=False)
+    else:
+        df = pd.DataFrame(posts_data)
+        df = df.sort_values('timestamp', ascending=False)
+        df.to_csv(csv_filename, index=False)
+    
+    print(f"Data saved to {csv_filename}")
+    return len(posts_data)
+
+def main():
+    """Main execution function"""
+    print(f"[{datetime.now()}] Starting Reddit monitor for r/{SUBREDDIT}")
+    print(f"Searching for keywords: {', '.join(KEYWORDS)}")
+    
+    posts = fetch_and_filter_posts()
+    
+    if posts:
+        count = save_to_csv(posts)
+        print(f"Found {count} relevant posts")
+    else:
+        print("No relevant posts found")
+    
+    print(f"[{datetime.now()}] Monitor run completed")
+
+if __name__ == "__main__":
+    main()
